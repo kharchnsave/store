@@ -1,3 +1,4 @@
+import { CatalogueSectionBoundary } from "@/components/catalogue/catalogue-error";
 import { CategoryShortcuts } from "@/components/home/category-shortcuts";
 import { ComingSoonTeasers } from "@/components/home/coming-soon-teasers";
 import { FreshFinds } from "@/components/home/fresh-finds";
@@ -11,9 +12,13 @@ export default function Home() {
     <>
       <CategoryShortcuts />
       <Hero />
-      <FreshFinds />
+      <CatalogueSectionBoundary id="fresh-finds-heading" title="Fresh Finds">
+        <FreshFinds />
+      </CatalogueSectionBoundary>
       <SizeShortcuts />
-      <KidsBanner />
+      <CatalogueSectionBoundary id="kids-banner-heading" title="Kids' New" quiet>
+        <KidsBanner />
+      </CatalogueSectionBoundary>
       <HelpLinks />
       <ComingSoonTeasers />
     </>

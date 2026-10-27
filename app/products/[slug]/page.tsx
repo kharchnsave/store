@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { InfoIcon } from "@/components/icons";
 import { StatusBadge } from "@/components/product/badges";
 import { ProductGrid } from "@/components/product/product-card";
@@ -11,8 +12,12 @@ import { CONDITIONS, DEPARTMENTS, STATUS_LABELS, STYLE_LABELS } from "@/lib/cata
 import { fullName } from "@/lib/catalog/product-utils";
 import { formatPrice } from "@/lib/format";
 
+// Prerenders the products published at build time; others render on first
+// request. Cache Components needs at least one entry, so an empty catalogue
+// gets a placeholder that resolves to the not-found page.
 export async function generateStaticParams() {
   const products = await getAllProducts();
+  if (products.length === 0) return [{ slug: "no-products-yet" }];
   return products.map((product) => ({ slug: product.slug }));
 }
 
@@ -28,7 +33,19 @@ export async function generateMetadata({
   };
 }
 
-export default async function ProductPage({ params }: PageProps<"/products/[slug]">) {
+// The page shell is shared by every product link, so the part that reads the
+// URL (`params`) streams in behind Suspense.
+export default function ProductPage({ params }: PageProps<"/products/[slug]">) {
+  return (
+    <div className="container-page py-6 md:py-8">
+      <Suspense fallback={<ProductSkeleton />}>
+        <ProductDetails params={params} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function ProductDetails({ params }: Pick<PageProps<"/products/[slug]">, "params">) {
   const { slug } = await params;
   const product = await getProductBySlug(slug);
   if (!product) notFound();
@@ -38,7 +55,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
   const condition = CONDITIONS.find((c) => c.value === product.condition)!;
 
   return (
-    <div className="container-page py-6 md:py-8">
+    <>
       <nav aria-label="Breadcrumb" className="mb-4 text-xs text-muted">
         <ol className="flex flex-wrap gap-1.5">
           <li>
@@ -116,7 +133,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
               <dt className="text-muted">Colour</dt>
               <dd>{product.colour}</dd>
               <dt className="text-muted">Item code</dt>
-              <dd>{product.id}</dd>
+              <dd>{product.itemCode}</dd>
             </dl>
           </section>
 
@@ -143,6 +160,29 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
           <ProductGrid products={related} />
         </section>
       ) : null}
+    </>
+  );
+}
+
+function ProductSkeleton() {
+  return (
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading product…</span>
+      <div className="mb-4 h-3 w-48 rounded bg-cream" />
+      <div className="grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:gap-12">
+        <div className="aspect-square rounded-lg bg-cream" />
+        <div>
+          <div className="h-3 w-20 rounded bg-cream" />
+          <div className="mt-2 h-8 w-3/4 rounded bg-cream" />
+          <div className="mt-3 h-5 w-40 rounded bg-cream" />
+          <div className="mt-4 h-7 w-28 rounded bg-cream" />
+          <div className="mt-6 space-y-3 border-t border-line pt-6">
+            <div className="h-4 w-32 rounded bg-cream" />
+            <div className="h-12 rounded-md bg-cream" />
+          </div>
+          <div className="mt-8 h-32 rounded-lg bg-cream" />
+        </div>
+      </div>
     </div>
   );
 }

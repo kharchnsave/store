@@ -63,66 +63,111 @@ export function CartLines({
   onNavigate?: () => void;
   imageSize?: number;
 }) {
-  const { lines, remove } = useCart();
+  const { lines, remove, lineStatus } = useCart();
 
   return (
     <ul className="divide-y divide-line">
-      {lines.map((line) => (
-        <li key={line.sku} className="flex gap-4 py-4">
-          <div
-            className="relative shrink-0 overflow-hidden rounded-md bg-cream"
-            style={{ width: imageSize, height: imageSize }}
-          >
-            <Image
-              src={line.image.src}
-              alt={line.image.alt}
-              fill
-              sizes={`${imageSize}px`}
-              className="object-cover"
-            />
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                  {line.brand}
+      {lines.map((line) => {
+        const status = lineStatus(line.sku);
+        const gone = status?.status === "unavailable";
+        const soldOut = status?.status === "sold-out";
+        const blocked = gone || soldOut;
+        return (
+          <li key={line.sku} className="flex gap-4 py-4">
+            <div
+              className={`relative shrink-0 overflow-hidden rounded-md bg-cream ${blocked ? "opacity-60" : ""}`}
+              style={{ width: imageSize, height: imageSize }}
+            >
+              <Image
+                src={line.image.src}
+                alt={line.image.alt}
+                fill
+                sizes={`${imageSize}px`}
+                className="object-cover"
+              />
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    {line.brand}
+                  </p>
+                  {gone ? (
+                    <p className="text-sm font-medium leading-snug">{line.name}</p>
+                  ) : (
+                    <Link
+                      href={`/products/${line.slug}`}
+                      onClick={onNavigate}
+                      className="text-sm font-medium leading-snug hover:underline"
+                    >
+                      {line.name}
+                    </Link>
+                  )}
+                </div>
+                <p className={`shrink-0 text-sm font-semibold ${blocked ? "text-muted line-through" : ""}`}>
+                  {formatPrice(line.price * line.quantity)}
                 </p>
-                <Link
-                  href={`/products/${line.slug}`}
-                  onClick={onNavigate}
-                  className="text-sm font-medium leading-snug hover:underline"
-                >
-                  {line.name}
-                </Link>
               </div>
-              <p className="shrink-0 text-sm font-semibold">
-                {formatPrice(line.price * line.quantity)}
-              </p>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                <StatusBadge status={line.status} />
+                <span>EU {line.size}</span>
+                {line.status === "preloved" ? (
+                  <span>· {CONDITION_LABELS[line.condition]}</span>
+                ) : (
+                  <span>· {formatPrice(line.price)} each</span>
+                )}
+              </div>
+              {gone ? (
+                <p className="text-xs font-medium text-danger">
+                  No longer available. This item isn&apos;t listed any more.
+                </p>
+              ) : soldOut ? (
+                <p className="text-xs font-medium text-danger">Sold out since you added it.</p>
+              ) : status?.status === "available" && status.stock < line.quantity ? (
+                <p className="text-xs font-medium text-danger">
+                  Only {status.stock} available now in EU {line.size}.
+                </p>
+              ) : null}
+              <div className="mt-1 flex items-end justify-between gap-3">
+                {blocked ? <span /> : <QuantityControl line={line} />}
+                <button
+                  type="button"
+                  onClick={() => remove(line.sku)}
+                  className="text-xs font-medium text-muted underline underline-offset-2 hover:text-danger"
+                >
+                  Remove<span className="sr-only"> {line.name}</span>
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-              <StatusBadge status={line.status} />
-              <span>EU {line.size}</span>
-              {line.status === "preloved" ? (
-                <span>· {CONDITION_LABELS[line.condition]}</span>
-              ) : (
-                <span>· {formatPrice(line.price)} each</span>
-              )}
-            </div>
-            <div className="mt-1 flex items-end justify-between gap-3">
-              <QuantityControl line={line} />
-              <button
-                type="button"
-                onClick={() => remove(line.sku)}
-                className="text-xs font-medium text-muted underline underline-offset-2 hover:text-danger"
-              >
-                Remove<span className="sr-only"> {line.name}</span>
-              </button>
-            </div>
-          </div>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
+}
+
+/** Explains why the subtotal may leave items out, or that stock couldn't be checked. */
+export function CartAvailabilityNote() {
+  const { unavailableCount, availabilityFailed } = useCart();
+  if (unavailableCount > 0) {
+    return (
+      <p className="rounded-md border border-danger/30 px-3 py-2 text-xs leading-relaxed text-danger">
+        {unavailableCount === 1
+          ? "1 item in your cart can't be bought any more and isn't included in the subtotal."
+          : `${unavailableCount} items in your cart can't be bought any more and aren't included in the subtotal.`}{" "}
+        Remove {unavailableCount === 1 ? "it" : "them"} to tidy up your cart.
+      </p>
+    );
+  }
+  if (availabilityFailed) {
+    return (
+      <p className="rounded-md bg-cream px-3 py-2 text-xs leading-relaxed text-muted">
+        We couldn&apos;t check current stock just now, so an item may have sold since you
+        added it.
+      </p>
+    );
+  }
+  return null;
 }
 
 export function DemoCheckoutNote() {

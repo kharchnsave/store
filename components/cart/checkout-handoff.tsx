@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { fullName } from "@/lib/catalog/product-utils";
 import { formatPrice, pluralize } from "@/lib/format";
+import { CartAvailabilityNote } from "./cart-lines";
 import { useCart } from "./cart-provider";
 
 /**
@@ -10,7 +11,14 @@ import { useCart } from "./cart-provider";
  * It never collects payment or personal details.
  */
 export function CheckoutHandoff() {
-  const { lines, count, subtotal, hydrated } = useCart();
+  const { lines, subtotal, hydrated, lineStatus } = useCart();
+  const isBlocked = (sku: string) => {
+    const status = lineStatus(sku)?.status;
+    return status === "unavailable" || status === "sold-out";
+  };
+  const buyableCount = lines
+    .filter((line) => !isBlocked(line.sku))
+    .reduce((sum, line) => sum + line.quantity, 0);
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_360px] lg:items-start">
@@ -55,15 +63,21 @@ export function CheckoutHandoff() {
                   <span className="min-w-0">
                     {line.quantity} × {fullName(line)}
                     <span className="text-muted"> · EU {line.size}</span>
+                    {isBlocked(line.sku) ? <span className="text-danger"> · unavailable</span> : null}
                   </span>
-                  <span className="shrink-0">{formatPrice(line.price * line.quantity)}</span>
+                  <span className={`shrink-0 ${isBlocked(line.sku) ? "text-muted line-through" : ""}`}>
+                    {formatPrice(line.price * line.quantity)}
+                  </span>
                 </li>
               ))}
             </ul>
             <p className="mt-4 flex justify-between border-t border-line pt-3 font-semibold">
-              <span>Subtotal ({pluralize(count, "item")})</span>
+              <span>Subtotal ({pluralize(buyableCount, "item")})</span>
               <span>{formatPrice(subtotal)}</span>
             </p>
+            <div className="mt-3">
+              <CartAvailabilityNote />
+            </div>
           </>
         )}
       </section>

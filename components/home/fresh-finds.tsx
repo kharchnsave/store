@@ -1,10 +1,22 @@
 import { ProductGrid } from "@/components/product/product-card";
 import { getNewestProducts } from "@/lib/catalog/catalog";
 import { DEPARTMENTS, DEPARTMENT_ORDER } from "@/lib/catalog/labels";
+import type { Product } from "@/lib/catalog/types";
 import { FreshFindsTabs } from "./fresh-finds-tabs";
 import { SectionHeading } from "./section-heading";
 
 const PER_TAB = 8;
+
+function Panel({ products }: { products: Product[] }) {
+  if (products.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-line px-6 py-10 text-center text-sm text-muted">
+        Nothing listed here yet. New pairs are added regularly, so check back soon.
+      </p>
+    );
+  }
+  return <ProductGrid products={products} />;
+}
 
 export async function FreshFinds() {
   const [all, ...byDepartment] = await Promise.all([
@@ -18,14 +30,14 @@ export async function FreshFinds() {
       label: "All",
       viewAllHref: "/shop",
       viewAllLabel: "View all",
-      panel: <ProductGrid products={all} />,
+      panel: <Panel products={all} />,
     },
     ...DEPARTMENT_ORDER.map((dept, i) => ({
       key: dept,
       label: DEPARTMENTS[dept].label,
       viewAllHref: DEPARTMENTS[dept].href,
       viewAllLabel: `View all ${DEPARTMENTS[dept].label.toLowerCase()}`,
-      panel: <ProductGrid products={byDepartment[i]} />,
+      panel: <Panel products={byDepartment[i]} />,
     })),
   ];
 

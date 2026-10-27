@@ -33,7 +33,18 @@ function catalogueTitle(query: CatalogQuery, raw: RawSearchParams) {
   return "All Shoes";
 }
 
-function EmptyState({ query, facets }: { query: CatalogQuery; facets: Facets }) {
+function EmptyState({ query, facets, total }: { query: CatalogQuery; facets: Facets; total: number }) {
+  if (total === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-line px-6 py-12 text-center">
+        <h2 className="text-lg font-bold">No shoes are listed right now</h2>
+        <p className="mx-auto mt-2 max-w-md text-sm text-muted">
+          New pairs are added regularly. Please check back soon.
+        </p>
+      </div>
+    );
+  }
+
   const clearFilters = catalogHref({ q: query.q, sort: query.sort });
   // Suggest the nearest sizes that do have stock under the other filters.
   const nearbySizes =
@@ -98,7 +109,7 @@ function EmptyState({ query, facets }: { query: CatalogQuery; facets: Facets }) 
 export async function Catalogue({ searchParams }: { searchParams: Promise<RawSearchParams> }) {
   const raw = await searchParams;
   const query = parseCatalogQuery(raw);
-  const { results, facets } = await searchCatalog(query);
+  const { results, facets, total } = await searchCatalog(query);
   const title = catalogueTitle(query, raw);
 
   return (
@@ -139,7 +150,7 @@ export async function Catalogue({ searchParams }: { searchParams: Promise<RawSea
                 <ProductGrid products={results} />
               </>
             ) : (
-              <EmptyState query={query} facets={facets} />
+              <EmptyState query={query} facets={facets} total={total} />
             )}
           </ResultsRegion>
         </div>

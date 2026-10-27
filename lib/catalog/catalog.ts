@@ -1,4 +1,3 @@
-import { demoProducts } from "./demo-products";
 import {
   CONDITIONS,
   DEPARTMENT_ORDER,
@@ -8,44 +7,47 @@ import {
 } from "./labels";
 import { isInStock, slugify } from "./product-utils";
 import { PRICE_RANGES, type CatalogQuery } from "./query";
+import { fetchPublishedProducts } from "./supabase-catalog";
 import type { Product } from "./types";
 
 /*
  * Catalogue data access. Everything that reads inventory goes through these
- * async functions, so swapping the demo data for a commerce backend only
- * means reimplementing them (add `"use cache"` + `cacheLife` around remote
- * fetches when you do).
+ * async functions. They read the published catalogue from Supabase (cached,
+ * see ./supabase-catalog.ts) and throw if it can't be loaded; there is no
+ * fallback data. Search, filters and sorting run here, over the published
+ * products, which suits a catalogue of hundreds rather than many thousands.
  */
 
 export async function getAllProducts(): Promise<Product[]> {
-  return demoProducts;
+  return fetchPublishedProducts();
 }
 
 export async function getProductBySlug(slug: string) {
-  return demoProducts.find((p) => p.slug === slug);
+  return (await fetchPublishedProducts()).find((p) => p.slug === slug);
 }
 
 export async function getNewestProducts(limit: number, department?: Product["department"]) {
   return sortProducts(
-    demoProducts.filter((p) => !department || p.department === department),
+    (await fetchPublishedProducts()).filter((p) => !department || p.department === department),
     "newest",
   ).slice(0, limit);
 }
 
 export async function getRelatedProducts(product: Product, limit = 4) {
   return sortProducts(
-    demoProducts.filter(
+    (await fetchPublishedProducts()).filter(
       (p) => p.department === product.department && p.id !== product.id,
     ),
     "newest",
   ).slice(0, limit);
 }
 
-/** Smallest and largest size stocked for a department. */
+/** Smallest and largest size stocked for a department, or null if it has none. */
 export async function getSizeRange(department: Product["department"]) {
-  const sizes = demoProducts
+  const sizes = (await fetchPublishedProducts())
     .filter((p) => p.department === department)
     .flatMap((p) => p.variants.map((v) => v.size));
+  if (sizes.length === 0) return null;
   return { min: Math.min(...sizes), max: Math.max(...sizes) };
 }
 
@@ -164,8 +166,7 @@ function countBy<V extends string | number>(
   }));
 }
 
-function buildFacets(query: CatalogQuery): Facets {
-  const all = demoProducts;
+function buildFacets(all: Product[], query: CatalogQuery): Facets {
   const without = (key: FacetKey) => all.filter((p) => matches(p, query, key));
 
   const sizes = [...new Set(all.flatMap((p) => p.variants.map((v) => v.size)))].sort((a, b) => a - b);
@@ -230,9 +231,10 @@ function buildFacets(query: CatalogQuery): Facets {
 }
 
 export async function searchCatalog(query: CatalogQuery) {
+  const all = await fetchPublishedProducts();
   const results = sortProducts(
-    demoProducts.filter((p) => matches(p, query)),
+    all.filter((p) => matches(p, query)),
     query.sort,
   );
-  return { results, facets: buildFacets(query) };
+  return { results, facets: buildFacets(all, query), total: all.length };
 }

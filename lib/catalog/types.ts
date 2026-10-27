@@ -21,6 +21,8 @@ export type ProductImage = {
   height: number;
   /** CSS object-position used when the photo is cropped to a square. */
   focus?: string;
+  /** Close-up of wear or a flaw on a pre-loved pair. */
+  showsDefect: boolean;
 };
 
 /**
@@ -35,7 +37,10 @@ export type ProductVariant = {
 };
 
 export type Product = {
+  /** Database ID (UUID). Not shown to shoppers. */
   id: string;
+  /** Human-readable item code shown on the product page, e.g. "PL-M-1001". */
+  itemCode: string;
   slug: string;
   name: string;
   brand: string;
@@ -46,7 +51,10 @@ export type Product = {
   /** Specific wear notes for pre-loved pairs. */
   conditionNotes: string[];
   colour: string;
-  /** Price in whole Pakistani rupees. */
+  /**
+   * Price in Pakistani rupees. The database stores paisa (`price_paisa`);
+   * lib/catalog/supabase-catalog.ts converts it, and nothing else should.
+   */
   price: number;
   description: string;
   images: ProductImage[];

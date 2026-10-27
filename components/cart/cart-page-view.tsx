@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { DEPARTMENTS, DEPARTMENT_ORDER } from "@/lib/catalog/labels";
 import { formatPrice, pluralize } from "@/lib/format";
-import { CartLines, DemoCheckoutNote } from "./cart-lines";
+import { CartAvailabilityNote, CartLines, DemoCheckoutNote } from "./cart-lines";
 import { useCart } from "./cart-provider";
 
 export function CartPageView() {
@@ -61,6 +61,7 @@ export function CartPageView() {
             <dd>{formatPrice(subtotal)}</dd>
           </div>
         </dl>
+        <CartAvailabilityNote />
         <DemoCheckoutNote />
         <Link href="/checkout" className="btn btn-lime h-12 w-full text-[15px]">
           Continue to checkout

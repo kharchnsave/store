@@ -31,8 +31,9 @@ export async function KidsBanner() {
             Big Adventures.
           </h2>
           <p className="mt-3 max-w-sm text-sm text-forest/85 md:text-[15px]">
-            Brand-new kids&apos; shoes in sizes EU {sizes.min} to {sizes.max}, with
-            stock shown for every size.
+            {sizes
+              ? `Brand-new kids' shoes in sizes EU ${sizes.min} to ${sizes.max}, with stock shown for every size.`
+              : "Brand-new kids' shoes, with stock shown for every size."}
           </p>
           <Link
             href={DEPARTMENTS.kids.href}

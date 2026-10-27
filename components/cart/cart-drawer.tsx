@@ -5,7 +5,7 @@ import { useId } from "react";
 import { Drawer } from "@/components/ui/drawer";
 import { DEPARTMENTS, DEPARTMENT_ORDER } from "@/lib/catalog/labels";
 import { formatPrice } from "@/lib/format";
-import { CartLines, DemoCheckoutNote } from "./cart-lines";
+import { CartAvailabilityNote, CartLines, DemoCheckoutNote } from "./cart-lines";
 import { useCart } from "./cart-provider";
 
 export function CartDrawer() {
@@ -26,6 +26,7 @@ export function CartDrawer() {
               <span className="font-medium">Subtotal</span>
               <span className="text-base font-semibold">{formatPrice(subtotal)}</span>
             </div>
+            <CartAvailabilityNote />
             <DemoCheckoutNote />
             <div className="grid grid-cols-2 gap-2">
               <Link href="/cart" onClick={closeCart} className="btn btn-outline">

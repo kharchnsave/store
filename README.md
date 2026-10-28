@@ -43,6 +43,7 @@ npm start          # serve the production build
 | `/cart`, `/checkout` | Full cart and the demo checkout hand-off |
 | `/size-guide`, `/condition-guide`, `/delivery-returns` | Help pages |
 | `/coming-soon`, `/about`, `/account` | Supporting pages |
+| `/admin/login`, `/admin` | Staff sign-in and the admin landing page (see [Admin area](#admin-area)) |
 
 ### Code layout
 
@@ -55,10 +56,14 @@ components/
   product/              product card, gallery, purchase panel, badges
   cart/                 cart provider, drawer, lines, cart page, checkout hand-off
   ui/drawer.tsx         accessible side drawer (native <dialog>)
+  admin/                login form, sign-out button
 lib/
+  auth/                 admin access check (admin.ts), safe post-login paths
   catalog/              types, labels, Supabase catalogue reads, search/filters, URL query parsing
   cart/                 localStorage-backed cart store, availability types
-  supabase/server.ts    server-only Supabase client
+  supabase/             config.ts (settings), server.ts (anonymous catalogue client),
+                        session.ts (per-request signed-in client for /admin)
+proxy.ts                refreshes admin sessions; runs on /admin only
   sizes.ts              EU/UK/US size tables
   site.ts               navigation and site copy
 scripts/
@@ -66,6 +71,7 @@ scripts/
 supabase/
   migrations/           database schema, applied in filename order
   seeds/                development fixtures (never for production)
+  setup/                owner-run SQL templates (placeholders only)
   tests/                SQL tests for constraints and permissions
 ```
 
@@ -117,8 +123,10 @@ instead of Shopify. Products, stock, carts and orders will live in our own datab
 and the storefront will read them through `lib/supabase/server.ts`.
 
 **Status:** the storefront reads its catalogue from Supabase (see
-[Catalogue data](#catalogue-data) and [Catalogue database](#catalogue-database)). Carts,
-orders and checkout are not built yet. The development project is `kharchnsave-dev`.
+[Catalogue data](#catalogue-data) and [Catalogue database](#catalogue-database)), and
+staff can sign in to an admin area that so far only shows a welcome page (see
+[Admin area](#admin-area)). Product editing, carts, orders and checkout are not built yet.
+The development project is `kharchnsave-dev`.
 
 ### Supabase setup
 
@@ -200,6 +208,98 @@ Notes:
 - Remove the fixtures with `delete from public.products where slug like 'dev-%';` (sizes
   and photos are deleted with them). Never run the seed on a production project.
 
+## Admin area
+
+`/admin/login` signs staff in with email and password (Supabase Auth, cookie sessions
+via `@supabase/ssr`). `/admin` is a protected landing page with a welcome message and
+**Sign out**. There is no public sign-up screen and no product editing yet.
+
+How access is decided:
+
+- **Signing in is not enough.** An account is an admin only if its Supabase Auth user ID
+  is listed in `public.admin_members`
+  (`supabase/migrations/20261027200000_create_admin_members.sql`). Email addresses and
+  user-editable metadata are never used, and nobody becomes an admin automatically.
+- **Checked on the server, on every request.** `getAdminAccess()` in `lib/auth/admin.ts`
+  verifies the session with Supabase Auth (`getUser()`, so a signed-out or deleted account
+  is refused at once; the cookie alone is never trusted), then reads the membership. Every
+  admin page must call it, and every future admin Server Action or Route Handler must call
+  `requireAdmin()`. Hiding a button or relying on a redirect is not protection.
+- **Fails closed.** If Supabase Auth or the membership lookup can't be reached, the admin
+  area shows "We couldn't verify your access" and stays locked.
+- **Memberships are owner-only.** RLS is enabled; visitors can't read the table, a
+  signed-in user can read only their own row, and nobody can add, change or remove rows
+  through the API. The owner manages them in the SQL Editor.
+- **Sessions:** `proxy.ts` (on `/admin` paths only) refreshes expiring sessions and marks
+  admin responses `private, no-store`. The session cookies are HttpOnly, `SameSite=Lax` and
+  limited to `/admin`, so storefront pages never receive them and stay cacheable. The
+  signed-in client (`lib/supabase/session.ts`) is created per request and is separate from
+  the anonymous catalogue client; nothing signed-in is cached.
+- After sign-in, people are only ever sent to a page inside `/admin` (`safeAdminPath`).
+
+> **Before enabling product editing:** require multi-factor authentication (MFA) for
+> admins. Enrol each admin in an authenticator app (TOTP), check for an `aal2` session in
+> `requireAdmin()`, and make every write policy require both membership and
+> `(select auth.jwt() ->> 'aal') = 'aal2'`. Password-only admin accounts must not be able
+> to change products.
+
+### Making yourself an admin (one-time owner setup)
+
+Do these in order, in the `kharchnsave-dev` dashboard:
+
+1. **Create the membership table.** SQL Editor → New query → paste all of
+   `supabase/migrations/20261027200000_create_admin_members.sql` → **Run**. Expect
+   "Success. No rows returned".
+2. **Check it (optional, recommended).** New query → paste
+   `supabase/tests/admin_members_test.sql` → **Run**. Success means every test passed. It
+   uses three temporary test users and rolls everything back.
+3. **Create your login.** Authentication → Users → **Add user** → **Create new user**.
+   Enter your email and a long, unique password (a password manager helps), tick
+   **Auto Confirm User**, and create it.
+4. **Copy your user ID.** Click your new user and copy its **User UID** (a long code like
+   `1a2b3c4d-…`).
+5. **Make that user an admin.** New query → paste
+   `supabase/setup/grant_admin_TEMPLATE.sql` → replace `PASTE-USER-UID-HERE` in the
+   `insert` line with your User UID (keep the quotes) → **Run**. Don't save your real UID
+   into the file in the project.
+6. **Sign in.** Run `npm run dev`, open <http://localhost:3000/admin/login> and sign in.
+   You should see "Welcome, *your email*".
+
+To remove someone's access, run the `delete` line at the bottom of the template with their
+User UID; their next page load is refused. Password resets for staff are done in
+Authentication → Users for now.
+
+Recommended (not changed by this project): in Authentication's sign-up settings, turn off
+"Allow new users to sign up" so accounts can only be created by you. Self-registered
+accounts would still not be admins, but there is no reason to allow them.
+
+If you later use the Supabase CLI, record this migration as applied first:
+`supabase migration repair --status applied 20261027200000`.
+
+### Verification status
+
+**Confirmed by hand against `kharchnsave-dev` (real Supabase Auth and database):**
+
+- The approved admin signs in and reaches the welcome page.
+- Refreshing `/admin` works, with no rendering error.
+- Signing out, then signing back in, works.
+- A separate signed-in account without an `admin_members` row is refused access.
+
+**Automated checks against `kharchnsave-dev` (no users created, nothing written):**
+signed-out visits redirect to the login page with `no-store`, wrong credentials get the
+generic error and no session cookie, forged or garbage cookies are refused, unsafe return
+paths are replaced, and storefront pages set no cookies and stay cacheable.
+
+**Still pending on the hosted project:**
+
+- Session-expiry refresh (an access token expiring and being refreshed by `proxy.ts`
+  while the admin stays signed in).
+- Membership removal (deleting an admin's `admin_members` row, then confirming their next
+  page load is refused).
+
+Both behave correctly against a local stand-in for Supabase Auth and the REST API, but
+that is a mock and does not prove how the hosted project behaves.
+
 ## Enabling real checkout
 
 No payment provider is configured in this project, so the cart is a clearly labelled demo
@@ -233,4 +333,5 @@ To take real orders you'll need:
       ASICS sneakers)
 - [ ] Domain, and `metadataBase` for share images
 - [ ] Production Supabase project and its environment variables on the host
+- [ ] MFA required for admin accounts before product editing is enabled
 # store

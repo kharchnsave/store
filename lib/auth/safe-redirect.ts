@@ -2,12 +2,15 @@ const BASE = "http://internal.invalid";
 
 export const ADMIN_HOME = "/admin";
 export const ADMIN_LOGIN = "/admin/login";
+export const ADMIN_MFA = "/admin/mfa";
+
+const isUnder = (path: string, base: string) => path === base || path.startsWith(`${base}/`);
 
 /**
  * Where to send someone after signing in. Only paths inside the admin area
  * are allowed (never another site, a protocol-relative URL such as
- * "//evil.example", a backslash trick, or the login page itself); anything
- * else falls back to the admin home page.
+ * "//evil.example", a backslash trick, or the login and two-step pages
+ * themselves); anything else falls back to the admin home page.
  */
 export function safeAdminPath(value: unknown): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 512) return ADMIN_HOME;
@@ -25,9 +28,14 @@ export function safeAdminPath(value: unknown): string {
   if (url.origin !== BASE) return ADMIN_HOME;
 
   const path = url.pathname;
-  const inAdmin = path === ADMIN_HOME || path.startsWith(`${ADMIN_HOME}/`);
-  const isLogin = path === ADMIN_LOGIN || path.startsWith(`${ADMIN_LOGIN}/`);
-  if (!inAdmin || isLogin) return ADMIN_HOME;
+  if (!isUnder(path, ADMIN_HOME) || isUnder(path, ADMIN_LOGIN) || isUnder(path, ADMIN_MFA)) {
+    return ADMIN_HOME;
+  }
 
   return `${path}${url.search}${url.hash}`;
+}
+
+/** The two-step verification page, returning to `next` (a safeAdminPath) afterwards. */
+export function mfaPath(next: string): string {
+  return next === ADMIN_HOME ? ADMIN_MFA : `${ADMIN_MFA}?next=${encodeURIComponent(next)}`;
 }

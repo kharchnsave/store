@@ -43,7 +43,7 @@ npm start          # serve the production build
 | `/cart`, `/checkout` | Full cart and the demo checkout hand-off |
 | `/size-guide`, `/condition-guide`, `/delivery-returns` | Help pages |
 | `/coming-soon`, `/about`, `/account` | Supporting pages |
-| `/admin/login`, `/admin` | Staff sign-in and the admin landing page (see [Admin area](#admin-area)) |
+| `/admin/login`, `/admin/mfa`, `/admin` | Staff sign-in, two-step verification (authenticator app) and the admin landing page (see [Admin area](#admin-area)) |
 
 ### Code layout
 
@@ -56,9 +56,9 @@ components/
   product/              product card, gallery, purchase panel, badges
   cart/                 cart provider, drawer, lines, cart page, checkout hand-off
   ui/drawer.tsx         accessible side drawer (native <dialog>)
-  admin/                login form, sign-out button
+  admin/                login form, authenticator setup and code forms, sign-out button
 lib/
-  auth/                 admin access check (admin.ts), safe post-login paths
+  auth/                 admin access check incl. two-step status (admin.ts), safe post-login paths
   catalog/              types, labels, Supabase catalogue reads, search/filters, URL query parsing
   cart/                 localStorage-backed cart store, availability types
   supabase/             config.ts (settings), server.ts (anonymous catalogue client),
@@ -211,8 +211,10 @@ Notes:
 ## Admin area
 
 `/admin/login` signs staff in with email and password (Supabase Auth, cookie sessions
-via `@supabase/ssr`). `/admin` is a protected landing page with a welcome message and
-**Sign out**. There is no public sign-up screen and no product editing yet.
+via `@supabase/ssr`). Admins then complete **two-step verification** at `/admin/mfa` with
+a 6-digit code from an authenticator app (TOTP). `/admin` is the protected landing page
+with a welcome message and **Sign out**. There is no public sign-up screen and no product
+editing yet.
 
 How access is decided:
 
@@ -220,13 +222,30 @@ How access is decided:
   is listed in `public.admin_members`
   (`supabase/migrations/20261027200000_create_admin_members.sql`). Email addresses and
   user-editable metadata are never used, and nobody becomes an admin automatically.
+- **Two-step verification is mandatory.** After the password, an admin without an
+  authenticator app must set one up (QR code or setup key, then a code to confirm it);
+  an admin who has one must enter a code. The dashboard requires a verified factor **and**
+  a session whose verified JWT says `aal: "aal2"` (it completed the code step). Having an
+  app set up is not enough on its own; a password-only session is always sent back to
+  `/admin/mfa`. Non-admins are refused even if they set up MFA through the API.
 - **Checked on the server, on every request.** `getAdminAccess()` in `lib/auth/admin.ts`
   verifies the session with Supabase Auth (`getUser()`, so a signed-out or deleted account
-  is refused at once; the cookie alone is never trusted), then reads the membership. Every
-  admin page must call it, and every future admin Server Action or Route Handler must call
-  `requireAdmin()`. Hiding a button or relying on a redirect is not protection.
-- **Fails closed.** If Supabase Auth or the membership lookup can't be reached, the admin
-  area shows "We couldn't verify your access" and stays locked.
+  is refused at once; the cookie alone is never trusted), reads the membership, then
+  checks the factor list (from Supabase Auth) and the session's `aal` claim (from
+  `getClaims()`, which verifies the JWT signature). Every admin page must call it, and
+  every future admin Server Action or Route Handler must call `requireAdmin()`. Hiding a
+  button or relying on a redirect is not protection.
+- **The two-step page has a narrower guard.** `/admin/mfa` and its two actions
+  (`app/admin/mfa/actions.ts`) accept a verified, current member who hasn't completed the
+  code step yet, and nothing else. Setup only starts when the admin presses **Set up
+  authenticator app** (never while a page renders or is prefetched); starting again
+  replaces an unfinished setup, and a verified factor is never removed by the app.
+- **Fails closed.** If Supabase Auth, the membership lookup or the MFA service can't be
+  reached, the admin area shows an error and stays locked.
+- **Secrets stay out of logs and storage.** Codes, setup keys, QR codes, passwords and
+  tokens are never logged or saved in the browser (the setup key exists only on the setup
+  screen until it's closed). Server errors log only error codes. There are no backup
+  codes and no bypass.
 - **Memberships are owner-only.** RLS is enabled; visitors can't read the table, a
   signed-in user can read only their own row, and nobody can add, change or remove rows
   through the API. The owner manages them in the SQL Editor.
@@ -237,11 +256,25 @@ How access is decided:
   the anonymous catalogue client; nothing signed-in is cached.
 - After sign-in, people are only ever sent to a page inside `/admin` (`safeAdminPath`).
 
-> **Before enabling product editing:** require multi-factor authentication (MFA) for
-> admins. Enrol each admin in an authenticator app (TOTP), check for an `aal2` session in
-> `requireAdmin()`, and make every write policy require both membership and
-> `(select auth.jwt() ->> 'aal') = 'aal2'`. Password-only admin accounts must not be able
-> to change products.
+> **Rule for future product editing:** catalogue permissions are unchanged (visitors can
+> only read, nobody can write through the API). When admin writes are added, every write
+> must call `requireAdmin()` in its Server Action, **and** every write policy in the
+> database must require both admin membership and a two-step-verified (`aal2`) session, so
+> a password-only session can't change products even by calling the API directly. For
+> example:
+>
+> ```sql
+> create policy "Verified admins can update products"
+>   on public.products for update to authenticated
+>   using (
+>     exists (select 1 from public.admin_members m where m.user_id = (select auth.uid()))
+>     and (select auth.jwt() ->> 'aal') = 'aal2'
+>   )
+>   with check (
+>     exists (select 1 from public.admin_members m where m.user_id = (select auth.uid()))
+>     and (select auth.jwt() ->> 'aal') = 'aal2'
+>   );
+> ```
 
 ### Making yourself an admin (one-time owner setup)
 
@@ -263,11 +296,107 @@ Do these in order, in the `kharchnsave-dev` dashboard:
    `insert` line with your User UID (keep the quotes) → **Run**. Don't save your real UID
    into the file in the project.
 6. **Sign in.** Run `npm run dev`, open <http://localhost:3000/admin/login> and sign in.
-   You should see "Welcome, *your email*".
+   You'll be asked to set up two-step verification (next section).
 
 To remove someone's access, run the `delete` line at the bottom of the template with their
 User UID; their next page load is refused. Password resets for staff are done in
 Authentication → Users for now.
+
+### Setting up two-step verification (each admin, once)
+
+1. Install an authenticator app on your phone, such as Google Authenticator, Microsoft
+   Authenticator, 1Password or Authy.
+2. Sign in at `/admin/login`. You'll land on **Set up two-step verification**.
+3. Press **Set up authenticator app**. A QR code and a setup key appear.
+4. In the app, add an account and scan the QR code (or type the setup key, choosing a
+   time-based key). It appears as **Kharch n Save**.
+5. Type the 6-digit code the app shows and press **Confirm and finish setup**. You land
+   on the admin welcome page. Your other signed-in browsers are signed out (Supabase does
+   this when a new factor is confirmed).
+6. From now on, every sign-in asks for a current code after your password.
+
+If you close or reload the page before confirming, just press **Set up authenticator app**
+again: it replaces the unfinished setup. If the app already shows an old "Kharch n Save"
+entry from an unfinished attempt, delete that entry in the app so you don't confuse them.
+
+**Dashboard settings to check (nothing here is changed by the project):**
+In Authentication, open the multi-factor settings and find the authenticator-app (TOTP)
+option: it must allow both enrollment and verification. Supabase enables TOTP on every
+project by default, so this is normally already right; if it's turned off, the setup
+screen says authenticator apps are turned off. (Exact menu labels can differ between
+dashboard versions.) Keep sign-ups disabled as recommended above.
+
+### If a store admin loses their authenticator app
+
+This is about the authenticator for **this store's** admin area. There are no backup codes,
+no recovery page and no in-app reset, and a verified authenticator can't be removed from a
+password-only session. The store owner removes it with Supabase's supported admin MFA API
+([`auth.admin.mfa.listFactors`](https://supabase.com/docs/reference/javascript/auth-admin-listfactors)
+and
+[`auth.admin.mfa.deleteFactor`](https://supabase.com/docs/reference/javascript/auth-admin-mfa-deletefactor)).
+These need the project's **secret key**, so they're run only from the owner's own computer,
+never from the website. Don't edit the `auth` tables by hand in the SQL Editor; use the
+API.
+
+1. Confirm the request really comes from that person (by phone or in person, not just by
+   email). If you suspect the account itself is compromised, first remove their
+   `admin_members` row (see above) so they're locked out while you sort it out.
+2. In Authentication → Users, copy that admin's **User UID**.
+3. In Project Settings → API Keys, create a new secret key just for this (or use an
+   existing one). Never put it in `.env.local`, a `NEXT_PUBLIC_` variable, the host's
+   settings or any file in the project.
+4. In a PowerShell terminal in the project folder (where `.env.local` provides the project
+   URL), paste the key and UID for this terminal only:
+
+   ```powershell
+   $env:SUPABASE_SECRET_KEY = "paste-the-secret-key"
+   $env:ADMIN_USER_ID = "paste-the-user-uid"
+   $recover = @'
+   import { createClient } from "@supabase/supabase-js";
+   const { NEXT_PUBLIC_SUPABASE_URL: url, SUPABASE_SECRET_KEY: key, ADMIN_USER_ID: userId, DELETE_FACTOR_ID: id } = process.env;
+   const { auth } = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+   if (id) {
+     const { error } = await auth.admin.mfa.deleteFactor({ userId, id });
+     console.log(error ? `Failed: ${error.code ?? error.message}` : "Removed. If it was verified, they are now signed out everywhere.");
+   } else {
+     const { data, error } = await auth.admin.mfa.listFactors({ userId });
+     if (error) console.log(`Failed: ${error.code ?? error.message}`);
+     else console.table(data.factors.map((f) => ({ id: f.id, type: f.factor_type, status: f.status, created: f.created_at })));
+   }
+   '@
+   $recover | node --env-file=.env.local --input-type=module -
+   ```
+
+   This **only lists** their factors (ID, type, status and date, with no secrets).
+5. To remove one, copy its `id` from the list and run:
+
+   ```powershell
+   $env:DELETE_FACTOR_ID = "paste-the-factor-id"
+   $recover | node --env-file=.env.local --input-type=module -
+   ```
+
+   Supabase signs the user out of all sessions when a verified factor is deleted. Run step
+   4 again to confirm the list is empty; remove any leftover unverified entries the same
+   way.
+6. Close the terminal, then delete the secret key you created in step 3.
+7. They sign in again and set up a new authenticator app as above.
+
+Supabase marks the admin MFA API as experimental, so check the linked pages before using
+it.
+
+### If the owner loses access to their Supabase account
+
+This is a different account: the one used to sign in to the Supabase dashboard, which
+controls the whole project, including every step above. Protect it with its own MFA in your
+Supabase account settings, and register a **backup** authenticator for it on a separate
+device. Supabase says it can't restore access to a dashboard account if you lose every
+second factor; see
+[Lost access / forgot the MFA device](https://supabase.com/docs/guides/troubleshooting/lost-accessforgot-the-mfa-device-nAPT-7)
+and [Multi-factor authentication for your account](https://supabase.com/docs/guides/platform/multi-factor-authentication).
+Nothing in this app can recover it.
+
+If the owner loses only their **store** authenticator but can still reach the Supabase
+dashboard, they follow the store-admin steps above for their own User UID.
 
 Recommended (not changed by this project): in Authentication's sign-up settings, turn off
 "Allow new users to sign up" so accounts can only be created by you. Self-registered
@@ -278,7 +407,8 @@ If you later use the Supabase CLI, record this migration as applied first:
 
 ### Verification status
 
-**Confirmed by hand against `kharchnsave-dev` (real Supabase Auth and database):**
+**Confirmed by hand against `kharchnsave-dev` (real Supabase Auth and database), before
+two-step verification was added:**
 
 - The approved admin signs in and reaches the welcome page.
 - Refreshing `/admin` works, with no rendering error.
@@ -299,6 +429,21 @@ paths are replaced, and storefront pages set no cookies and stay cacheable.
 
 Both behave correctly against a local stand-in for Supabase Auth and the REST API, but
 that is a mock and does not prove how the hosted project behaves.
+
+**Two-step verification, confirmed by hand against `kharchnsave-dev` with a real
+authenticator app:**
+
+- The owner set up an authenticator app (enrollment succeeded).
+- After signing out and back in, an authenticator code is required.
+- Visiting `/admin` after a password-only sign-in redirects to verification.
+- A valid code grants access to the admin area.
+
+Also tested end to end against the local stand-in (a mock of Supabase Auth's MFA endpoints
+with real TOTP codes), plus signed-out and forged-token checks against `kharchnsave-dev`.
+
+**Two-step verification, still pending on the hosted project:** the message for a wrong
+code, a non-admin account being refused now that MFA is in place, the lost-authenticator
+recovery (admin MFA API) and the session-expiry and membership-removal checks above.
 
 ## Enabling real checkout
 
@@ -333,5 +478,7 @@ To take real orders you'll need:
       ASICS sneakers)
 - [ ] Domain, and `metadataBase` for share images
 - [ ] Production Supabase project and its environment variables on the host
-- [ ] MFA required for admin accounts before product editing is enabled
+- [ ] Two-step verification confirmed by hand on the hosted project for every admin
+- [ ] Any admin write policies require both admin membership and `aal2` (see
+      [Admin area](#admin-area))
 # store

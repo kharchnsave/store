@@ -3,7 +3,7 @@
 import { isAuthApiError } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { redirect, unstable_rethrow } from "next/navigation";
-import { ADMIN_LOGIN, safeAdminPath } from "@/lib/auth/safe-redirect";
+import { ADMIN_LOGIN, mfaPath, safeAdminPath } from "@/lib/auth/safe-redirect";
 import { SESSION_COOKIE_OPTIONS } from "@/lib/supabase/config";
 import { createSessionClient } from "@/lib/supabase/session";
 
@@ -13,8 +13,9 @@ const GENERIC_FAILURE = "The email or password is incorrect.";
 
 /**
  * Email/password sign-in. Messages are deliberately generic: they never say
- * whether an account exists. Signing in does not grant admin access; the
- * admin page checks membership separately.
+ * whether an account exists. Signing in does not grant admin access: it
+ * leads to the two-step page, which checks membership and asks for the
+ * authenticator code before anything else.
  */
 export async function signIn(_previous: SignInState, formData: FormData): Promise<SignInState> {
   const email = String(formData.get("email") ?? "").trim().slice(0, 254);
@@ -43,7 +44,7 @@ export async function signIn(_previous: SignInState, formData: FormData): Promis
   }
   if (failed) return { error: failed, email };
 
-  redirect(next);
+  redirect(mfaPath(next));
 }
 
 /** Ends this device's session, even if Supabase can't be reached. */
